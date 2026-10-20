@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GBI – Visor 3D</title>
+<style>
+:root{--bg:#fff;--fg:#1c1c1e;--mut:#6b6b70;--bd:#d9d9de;--ac:#ff7a1a;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#17171a;--fg:#f2f2f4;--mut:#9a9aa2;--bd:#34343a}}
+:root[data-theme="dark"]{--bg:#17171a;--fg:#f2f2f4;--mut:#9a9aa2;--bd:#34343a}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;flex-direction:column}
+header{padding:12px 16px;border-bottom:1px solid var(--bd)}
+h1{font-size:17px;margin:0}
+p{margin:2px 0 0;font-size:13px;color:var(--mut)}
+#v{flex:1;min-height:0;position:relative;touch-action:none;cursor:grab}
+canvas{display:block;width:100%;height:100%}
+.bar{display:flex;flex-wrap:wrap;gap:8px;padding:10px 16px;border-top:1px solid var(--bd)}
+button{font:inherit;font-size:13px;padding:7px 12px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--fg);cursor:pointer}
+button:hover{border-color:var(--ac)}
+.tabs{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+button.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.mut{font-size:13px;color:var(--mut)}
+.cl{font-size:13px;color:var(--mut);display:flex;align-items:center;gap:6px;border:1px solid var(--bd);border-radius:8px;padding:4px 8px}
+input[type=color]{width:30px;height:24px;padding:0;border:none;background:none;cursor:pointer}
+</style>
+</head>
+<body>
+<header><h1>GBI · Bicicleta urbana de alto rendimiento</h1><p>Arrastra para rotar · rueda o pellizco para zoom</p><div class="tabs"><button id="tCity" class="on">🏙️ Ciudad</button><button id="tComp">🔧 Componentes y colores</button></div></header>
+<div id="v"></div>
+<div class="bar" id="barCity">
+<button data-v="0">Lateral</button><button data-v="1">3/4 frontal</button><button data-v="2">3/4 trasera</button><button data-v="3">Frontal</button><button data-v="4">Superior</button><button id="auto">Auto-rotación</button><button id="cityBtn">Ciudad: sí</button><label style="font-size:13px;color:var(--mut);display:flex;align-items:center;gap:6px">Velocidad <input type="range" id="spd" min="0" max="12" value="5"></label>
+</div>
+<div class="bar" id="barComp" style="display:none;flex-direction:column;max-height:42vh;overflow:auto"><div id="partBtns" class="row"></div><div id="colors" class="row"></div><div class="row"><span class="mut">Estilos:</span><span id="presets" class="row"></span><button id="auto2">Rotar</button></div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+var el=document.getElementById('v');
+var R=new THREE.WebGLRenderer({antialias:true});
+R.setPixelRatio(Math.min(devicePixelRatio,2));
+el.appendChild(R.domElement);
+var S=new THREE.Scene();var fog=new THREE.Fog(0xcfdbe6,6,16);S.background=new THREE.Color(0xcfdbe6);S.fog=fog;
+var C=new THREE.PerspectiveCamera(32,1,0.1,50);
+S.add(new THREE.HemisphereLight(0xffffff,0x888888,0.9));
+var dl=new THREE.DirectionalLight(0xffffff,0.8);dl.position.set(2,3,2);S.add(dl);
+var dl2=new THREE.DirectionalLight(0xffffff,0.35);dl2.position.set(-2,1,-2);S.add(dl2);
+var floor=new THREE.Mesh(new THREE.PlaneGeometry(80,80),new THREE.MeshLambertMaterial({color:0x9c9c9c}));
+floor.rotation.x=-Math.PI/2;floor.position.y=-0.001;S.add(floor);
+
+var M={
+ asf:new THREE.MeshStandardMaterial({color:0x4a4d52,roughness:0.85,metalness:0.2}),
+ brk:new THREE.MeshStandardMaterial({color:0x8a4b3a,roughness:0.8}),
+ org:new THREE.MeshStandardMaterial({color:0xff7a1a,roughness:0.6}),
+ blk:new THREE.MeshStandardMaterial({color:0x101114,roughness:0.5,metalness:0.3}),
+ tire:new THREE.MeshStandardMaterial({color:0x151515,roughness:0.95}),
+ rim:new THREE.MeshStandardMaterial({color:0x26282c,roughness:0.4,metalness:0.5}),
+ glow:new THREE.MeshBasicMaterial({color:0xff8a2a}),
+ white:new THREE.MeshBasicMaterial({color:0xffffff}),
+ red:new THREE.MeshBasicMaterial({color:0xff2222}),
+ oled:new THREE.MeshBasicMaterial({color:0x0a1a12}),
+ lat:new THREE.MeshStandardMaterial({color:0xff7a1a,wireframe:true})
+};
+var bike=new THREE.Group();S.add(bike);var target=bike,wheels=[],curPart='Cuadro',parts={};function tag(o,m){var n=(curPart==='Cuadro'&&m===M.org)?'Horquilla y vainas':curPart;(parts[n]=parts[n]||[]).push(o)}
+function V(x,y,z){return new THREE.Vector3(x,y,z||0)}
+function tube(a,b,r,m,r2){
+ var d=new THREE.Vector3().subVectors(b,a),L=d.length();
+ var g=new THREE.CylinderGeometry(r2||r,r,L,14);
+ var o=new THREE.Mesh(g,m);
+ o.position.copy(a).add(b).multiplyScalar(0.5);
+ o.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),d.normalize());
+ tag(o,m);target.add(o);return o;
+}
+function add(geo,m,x,y,z,rx,ry,rz){var o=new THREE.Mesh(geo,m);o.position.set(x,y,z||0);if(rx)o.rotation.x=rx;if(ry)o.rotation.y=ry;if(rz)o.rotation.z=rz;tag(o,m);target.add(o);return o}
+
+curPart='Ruedas';
+var RA=V(-0.42,0.34),FA=V(0.42,0.34);
+[RA,FA].forEach(function(p0){var p=V(0,0,0);var wg=new THREE.Group();wg.position.set(p0.x,p0.y,0);bike.add(wg);wheels.push(wg);target=wg;
+ add(new THREE.TorusGeometry(0.335,0.016,14,72),M.tire,p.x,p.y,0);
+ add(new THREE.TorusGeometry(0.312,0.012,10,72),M.rim,p.x,p.y,0).scale.z=2.2;
+ for(var i=0;i<16;i++){
+  var a=i/16*Math.PI*2;
+  tube(V(p.x,p.y,0.0),V(p.x+Math.cos(a)*0.31,p.y+Math.sin(a)*0.31,0),0.0016,M.rim);
+ }
+ add(new THREE.CylinderGeometry(0.014,0.014,0.11,12),M.blk,p.x,p.y,0,Math.PI/2);target=bike;
+});
+
+curPart='Cuadro';// geometría del cuadro
+var BB=V(-0.07,0.28),ST=V(-0.17,0.72),HT=V(0.33,0.71),HB=V(0.37,0.59);
+tube(ST,HT,0.019,M.asf,0.022);              // tubo superior
+tube(HB,BB,0.027,M.asf,0.022);              // tubo diagonal
+tube(BB,ST,0.019,M.asf);                    // tubo del sillín
+tube(V(0.325,0.74),V(0.37,0.57),0.026,M.asf);// tubo de dirección
+[-0.05,0.05].forEach(function(z){
+ tube(V(BB.x,BB.y,z*0.6),V(RA.x,RA.y,z),0.012,M.org);       // vainas bajas (naranja)
+ tube(V(ST.x,ST.y-0.02,z*0.5),V(RA.x,RA.y,z),0.009,M.brk);  // vainas altas (ladrillo)
+ tube(V(0.37,0.59,z*0.5),V(FA.x,FA.y,z),0.012,M.org,0.009); // horquilla (naranja)
+});
+tube(V(0.37,0.60,-0.05),V(0.37,0.60,0.05),0.022,M.org);     // corona
+// detalle ladrillo en cuadro
+tube(V(-0.14,0.64),V(-0.08,0.44),0.0215,M.brk);
+tube(V(0.1,0.715),V(0.26,0.712),0.0235,M.brk);
+
+curPart='Smart Passport';// Smart Passport (zafiro negro + pulso naranja)
+add(new THREE.BoxGeometry(0.05,0.006,0.026),M.blk,0.22,0.7345,0);
+add(new THREE.BoxGeometry(0.036,0.0065,0.006),M.glow,0.22,0.7355,0);
+
+curPart='Cockpit y pantalla OLED';// cockpit integrado
+tube(V(0.33,0.74),V(0.405,0.77),0.016,M.asf);               // potencia
+add(new THREE.BoxGeometry(0.035,0.012,0.05),M.oled,0.395,0.784,0);
+add(new THREE.BoxGeometry(0.02,0.0035,0.03),M.glow,0.395,0.791,0);
+var bar=tube(V(0.43,0.77,-0.21),V(0.43,0.77,0.21),0.0115,M.asf);
+[-1,1].forEach(function(s){
+ tube(V(0.43,0.77,s*0.21),V(0.50,0.73,s*0.21),0.011,M.asf);
+ tube(V(0.50,0.73,s*0.21),V(0.46,0.64,s*0.21),0.011,M.asf);
+ tube(V(0.405,0.77,s*0.02),V(0.43,0.77,s*0.12),0.012,M.asf);
+});
+
+curPart='Sillín 3D';// tija + sillín reticular impreso en 3D
+tube(V(-0.17,0.71),V(-0.185,0.79),0.0135,M.blk);
+var sad=add(new THREE.BoxGeometry(0.27,0.03,0.12,10,2,5),M.lat,-0.2,0.82,0);
+sad.scale.set(1,1,1);
+add(new THREE.BoxGeometry(0.2,0.022,0.07),M.blk,-0.2,0.808,0);
+
+curPart='Luces';// luces integradas
+add(new THREE.BoxGeometry(0.004,0.17,0.003),M.white,0.403,0.455,0.0).rotation.z=-0.15;
+add(new THREE.BoxGeometry(0.004,0.17,0.014),M.red,-0.14,0.58,0).rotation.z=0.17;
+tube(V(-0.14,0.66),V(-0.145,0.5),0.0025,M.red);
+
+curPart='Transmisión';// transmisión: bielas, plato, desviador, cassette
+add(new THREE.CylinderGeometry(0.1,0.1,0.006,40),M.blk,BB.x,BB.y,0.045,Math.PI/2);
+add(new THREE.CylinderGeometry(0.035,0.035,0.012,24),M.blk,RA.x,RA.y,0.04,Math.PI/2);
+tube(V(BB.x,BB.y,0.06),V(BB.x+0.12,BB.y-0.09,0.075),0.009,M.asf);
+tube(V(BB.x,BB.y,-0.06),V(BB.x-0.12,BB.y+0.09,-0.075),0.009,M.asf);
+add(new THREE.BoxGeometry(0.03,0.07,0.02),M.org,RA.x-0.02,RA.y-0.07,0.055);
+tube(V(BB.x,BB.y+0.1,0.048),V(RA.x,RA.y+0.035,0.048),0.0025,M.blk);
+tube(V(BB.x,BB.y-0.1,0.048),V(RA.x-0.02,RA.y-0.1,0.048),0.0025,M.blk);
+
+// cámara
+bike.position.y=0.011;
+var city=new THREE.Group();S.add(city);var mov=[],cityOn=true;
+var studio=new THREE.Mesh(new THREE.CircleGeometry(1.4,48),new THREE.MeshBasicMaterial({color:0xe2e2e2}));studio.rotation.x=-Math.PI/2;studio.position.y=0.0005;studio.visible=false;S.add(studio);
+var road=new THREE.Mesh(new THREE.PlaneGeometry(60,3.6),new THREE.MeshLambertMaterial({color:0x3a3b3f}));road.rotation.x=-Math.PI/2;road.position.y=0.001;city.add(road);
+var cv=document.createElement('canvas');cv.width=64;cv.height=128;var cx=cv.getContext('2d');cx.fillStyle='#fff';cx.fillRect(0,0,64,128);
+for(var yy=0;yy<8;yy++)for(var xx=0;xx<4;xx++){cx.fillStyle=Math.random()<0.3?'#ffd98a':'#5d6b7a';cx.fillRect(xx*16+3,yy*16+3,10,10)}
+var tx=new THREE.CanvasTexture(cv);
+var tints=[0xb5654a,0x8a4b3a,0xc9b79c,0x9aa3ab,0xd9a07a,0x7d8791].map(function(c){return new THREE.MeshLambertMaterial({color:c,map:tx})});
+function mv(o){city.add(o);mov.push(o)}
+for(var i=0;i<12;i++){var dm=new THREE.Mesh(new THREE.BoxGeometry(0.7,0.002,0.05),M.white);dm.position.set(-12+i*2,0.003,-1.1);mv(dm)}
+[-1,1].forEach(function(s){
+ var x=-12;
+ while(x<11.5){var w=Math.min(0.9+Math.random()*1.5,12-x),h=2+Math.random()*5,d=1.2+Math.random()*0.8;
+  var b=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),tints[Math.floor(Math.random()*tints.length)]);
+  b.position.set(x+w/2,h/2,s*(4.2+d/2));mv(b);x+=w+0.12}
+ for(var k=0;k<6;k++){var px=-12+k*4;
+  var pole=new THREE.Mesh(new THREE.CylinderGeometry(0.02,0.025,1.6,8),M.blk);pole.position.set(px,0.8,s*2.2);mv(pole);
+  var lamp=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.02,0.1),M.glow);lamp.position.set(px,1.6,s*2.1);mv(lamp)}
+});
+document.getElementById('cityBtn').onclick=function(){cityOn=!cityOn;city.visible=cityOn;floor.visible=cityOn;studio.visible=!cityOn;S.fog=cityOn?fog:null;S.background.set(cityOn?0xcfdbe6:0xeeeeee);this.textContent='Ciudad: '+(cityOn?'sí':'no')};
+var tgt=new THREE.Vector3(0,0.42,0),goal=tgt.clone();
+var PN=['Cuadro','Horquilla y vainas','Cockpit y pantalla OLED','Smart Passport','Sillín 3D','Ruedas','Transmisión','Luces'];
+var roleOf=new Map([[M.asf,'Base'],[M.brk,'Ladrillo'],[M.org,'Naranja'],[M.blk,'Negro'],[M.tire,'Llanta'],[M.rim,'Rin'],[M.glow,'Luz LED'],[M.white,'LED blanco'],[M.red,'LED rojo'],[M.oled,'Pantalla'],[M.lat,'Retícula']]);
+var pm={};
+PN.forEach(function(n){pm[n]={};(parts[n]||[]).forEach(function(o){var r=roleOf.get(o.material)||'Otro';if(!pm[n][r])pm[n][r]=o.material.clone();o.material=pm[n][r]})});
+var PRE={'Original':{Base:0x4a4d52,Ladrillo:0x8a4b3a,Naranja:0xff7a1a},'Azul eléctrico':{Base:0x1f3a8a,Ladrillo:0x0b1b4d,Naranja:0x35c4ff},'Blanco perla':{Base:0xe8e8ea,Ladrillo:0xb0b0b8,Naranja:0xff7a1a},'Rojo carrera':{Base:0xb3141b,Ladrillo:0x3a0b0e,Naranja:0xffffff},'Negro total':{Base:0x16171a,Ladrillo:0x2a2b30,Naranja:0xff7a1a}};
+var cur=null,tab='city';
+var barC=document.getElementById('barCity'),barP=document.getElementById('barComp'),pb=document.getElementById('partBtns'),cp=document.getElementById('colors');
+function showAll(){PN.forEach(function(n){(parts[n]||[]).forEach(function(o){o.visible=true})});cur=null;goal.set(0,0.42,0);dist=2.6;drawParts()}
+function pick(n){cur=n;var bb=new THREE.Box3();(parts[n]||[]).forEach(function(o){bb.expandByObject(o)});PN.forEach(function(k){(parts[k]||[]).forEach(function(o){o.visible=(k===n)})});bb.getCenter(goal);dist=Math.min(3,Math.max(0.5,bb.getSize(new THREE.Vector3()).length()*2.2));drawParts()}
+function drawParts(){
+ pb.innerHTML='';
+ var all=document.createElement('button');all.textContent='Bici completa';if(!cur)all.className='on';all.onclick=showAll;pb.appendChild(all);
+ PN.forEach(function(n){var b=document.createElement('button');b.textContent=n;if(cur===n)b.className='on';b.onclick=function(){pick(n)};pb.appendChild(b)});
+ cp.innerHTML='';
+ if(!cur){var h=document.createElement('span');h.className='mut';h.textContent='Elige una pieza para aislarla y cambiar sus colores, o aplica un estilo a toda la bici.';cp.appendChild(h);return}
+ Object.keys(pm[cur]).forEach(function(r){if(r==='Otro')return;var m=pm[cur][r],l=document.createElement('label'),i=document.createElement('input');
+  l.className='cl';l.appendChild(document.createTextNode(r+' '));i.type='color';i.value='#'+m.color.getHexString();i.oninput=function(){m.color.set(i.value)};l.appendChild(i);cp.appendChild(l)})
+}
+var pr=document.getElementById('presets');
+Object.keys(PRE).forEach(function(k){var b=document.createElement('button');b.textContent=k;b.onclick=function(){PN.forEach(function(n){Object.keys(PRE[k]).forEach(function(r){if(pm[n][r])pm[n][r].color.set(PRE[k][r])})});drawParts()};pr.appendChild(b)});
+function setTab(t){tab=t;cityOn=(t==='city');city.visible=cityOn;floor.visible=cityOn;studio.visible=!cityOn;S.fog=cityOn?fog:null;S.background.set(cityOn?0xcfdbe6:0xeeeeee);barC.style.display=cityOn?'':'none';barP.style.display=cityOn?'none':'';document.getElementById('tCity').className=cityOn?'on':'';document.getElementById('tComp').className=cityOn?'':'on';document.getElementById('cityBtn').textContent='Ciudad: sí';if(cityOn){showAll();th=0.55;auto=false}else{th=0.6;auto=true;drawParts()}}
+document.getElementById('tCity').onclick=function(){setTab('city')};
+document.getElementById('tComp').onclick=function(){setTab('comp')};
+document.getElementById('auto2').onclick=function(){auto=!auto};
+var th=0.55,ph=1.35,dist=2.6,auto=false;
+var views=[[0,1.45,2.4],[0.75,1.3,2.4],[-0.75,1.3,2.4],[1.57,1.45,2.4],[0,0.15,2.6]];
+// th=0 → vista desde +z (lateral, frente hacia la derecha)
+function cam(){
+ tgt.lerp(goal,0.12);C.position.set(tgt.x+Math.sin(th)*Math.sin(ph)*dist,tgt.y-0.42+Math.cos(ph)*dist*0.9+0.2,tgt.z+Math.cos(th)*Math.sin(ph)*dist);
+ C.lookAt(tgt);
+}
+function size(){var w=el.clientWidth,h=el.clientHeight;R.setSize(w,h,false);C.aspect=w/h;C.updateProjectionMatrix()}
+addEventListener('resize',size);size();
+var drag=false,lx=0,ly=0,pts={},pd=0;
+el.addEventListener('pointerdown',function(e){el.setPointerCapture(e.pointerId);pts[e.pointerId]=e;drag=true;lx=e.clientX;ly=e.clientY;auto=false;el.style.cursor='grabbing'});
+el.addEventListener('pointermove',function(e){
+ if(!pts[e.pointerId])return;pts[e.pointerId]=e;var k=Object.keys(pts);
+ if(k.length===2){var a=pts[k[0]],b=pts[k[1]],d=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);if(pd)dist=Math.min(3.8,Math.max(0.35,dist*pd/d));pd=d;return}
+ th-=(e.clientX-lx)*0.008;ph=Math.min(2.2,Math.max(0.15,ph-(e.clientY-ly)*0.006));lx=e.clientX;ly=e.clientY;
+});
+function up(e){delete pts[e.pointerId];pd=0;drag=false;el.style.cursor='grab'}
+el.addEventListener('pointerup',up);el.addEventListener('pointercancel',up);
+el.addEventListener('wheel',function(e){e.preventDefault();dist=Math.min(3.8,Math.max(0.35,dist*(1+e.deltaY*0.001)))},{passive:false});
+document.querySelectorAll('[data-v]').forEach(function(b){b.onclick=function(){var v=views[+b.dataset.v];th=v[0];ph=v[1];dist=v[2];auto=false}});
+document.getElementById('auto').onclick=function(){auto=!auto};
+var clk=new THREE.Clock();
+(function loop(){requestAnimationFrame(loop);var dt=Math.min(clk.getDelta(),0.05),v=tab==='city'?+document.getElementById('spd').value*0.6:0;
+ if(auto)th+=0.006;
+ if(cityOn)mov.forEach(function(o){o.position.x-=v*dt;if(o.position.x<-12)o.position.x+=24});
+ wheels.forEach(function(w){w.rotation.z-=v*dt/0.335});
+ cam();R.render(S,C)})();
+})();
+</script>
+</body>
+</html>
